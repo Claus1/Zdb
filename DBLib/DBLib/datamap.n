@@ -1,0 +1,759 @@
+﻿//
+// Zen Database Library for Nemerle
+// Copyright (c) 2012, George Dernovoy (g.dernovoy@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without modification,
+// are permitted provided that the following conditions are met:
+//
+//     * Redistributions of source code must retain the above copyright notice,
+//       this list of conditions and the following disclaimer.
+//     * Redistributions in binary form must reproduce the above copyright notice,
+//       this list of conditions and the following disclaimer in the documentation
+//       and/or other materials provided with the distribution.
+//     * Neither the name of the author nor the names of its contributors may be
+//       used to endorse or promote products derived from this software without
+//       specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+// ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+// WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+// ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+// ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+#pragma indent
+#pragma warning disable 10005
+
+using System
+using System.Linq
+using System.IO
+using System.Collections.Generic
+using System.Runtime.InteropServices
+using System.IO.MemoryMappedFiles
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Formatters.Binary
+using Nemerle.Imperative
+
+
+namespace DBLib
+
+  public interface IPersist    
+    Address: int         
+      get
+    Dbase : Database
+      get      
+    /*немедленное сохранение объекта*/  
+    Save() : void    
+    /*метит как удаленный, попытка доступа к него будет вызывать исключение*/
+    Delete(): void    
+    /*метод для считывая объекта из базы. может понадобиться при отмене изменений*/
+    SavedClone() : IPersist 
+    /*статус объекта в текущей транзакции*/
+    SetStatus(x: ObjectStatus): void
+        
+  public struct Memblock    
+  /*database memory descriptor*/    
+    static public delta : int = Marshal.SizeOf(typeof(Memblock))
+    
+    static public Create[T](count: int) : Memblock
+    
+      Memblock(count * SizeOf.[T]())
+      
+    static public Create[T]() : Memblock
+    
+      Memblock(SizeOf.[T]())
+    
+    static public SizeOf[T]() : int       
+    /*Marshal.Size(char) == 2 for russian letters and 
+    generic type has to be calculating*/       
+      def type = typeof(T)
+      
+      if (type.Equals(typeof(char)))
+        2
+      else 
+        if (type.IsGenericType)          
+        
+          Marshal.SizeOf(default(T))
+        else
+          Marshal.SizeOf(type)              
+        
+    mutable public itype : int //type index
+    
+    mutable length : int //of inclusive memory 
+    
+    public setArr[T](arr_delta: int, arr_size: int): void
+    /*параметры содержащегося массива*/  
+      length = arr_size * SizeOf.[T]()
+      
+      itype = -arr_delta
+    
+    public arr_delta: int
+    /*блок метка для сохранения объектов с переменным размером*/
+      get
+        assert(itype <= 0)
+        
+        if (itype < 0) -itype else 0                    
+    
+    public size : int    
+    /*блок со структурой*/
+      get
+        mutable add = length % 4 //выравнивание границы блока            
+        
+        when (add != 0)                
+          add = 4 - add
+                
+        delta + length + add              
+        
+    public Count[T](): int
+    /*кол-во элементов в массиве*/      
+      length / SizeOf.[T]()
+            
+    this(len : int)
+        
+      length = len            
+          
+  
+  public struct InnerDbRoot
+    //смещение первого свободного блока
+    public mutable d_free : int
+    //смещение чистой памяти        
+    public mutable d_new : int  
+    //рутовый объект
+    public mutable d_root_obj : int 
+    //список зарегистированных сохраняемых классов
+    public mutable types : int    
+    //список используемых баз данных
+    public mutable bases : int
+     
+  public type Constuctor = Database * int -> IPersist
+  
+  public type DictTypes = Dictionary[string, Constuctor]            
+  
+  public class Database: IDisposable
+    //при создании объекты берут значение своей базы отсюда, если не указано другое
+    public static mutable Active : Database        
+    //на сколько растет база при расширении
+    public static GrowthRate  = 1.5
+    //резервировать(false) или нет доп. пространство для коллекций
+    public static MinimazeSize = true
+    
+    static DefaultInitSize  = 1 << 20
+    
+    public static null_ = -1
+    
+    static formatter =  BinaryFormatter()
+    
+    static open_bases = List.[Database]()
+    
+    static mutable outer_types : DictTypes        
+    
+    public static Find(fname : string) : Database
+      
+      open_bases.Find(x => x.filename == fname)
+      
+    public static Open(fname : string) : Database
+    
+      Find(fname) ?? if (File.Exists(fname))
+        Database(fname, FileInfo(fname).Length :> int, outer_types, true, false) 
+      else
+        throw ArgumentException ($"$fname database doesnt exist!") 
+    
+    /*               структура базы                 */                  
+    multibase : bool
+    
+    filename : string
+    
+    open_all_now : bool
+    
+    //информация в базе о используемых базах
+    use_base_names : List[string]    
+    //используемые в данных момент базы
+    use_bases: List[Database]                 
+        
+    transaction_objects = List.[IPersist]()
+    
+    constructors = List.[Constuctor]()        
+    
+    hash_types = Dictionary.[string, int]()        
+    
+    writedInTransaction = HashSet.[object]()
+        
+    //индекс объектов - быстрый хэш
+    hash_objects : array[list[IPersist]]    
+    
+    //индексы на .Net коллекции и не-персистные объекты
+    unpersist_objects = Dictionary.[object, int]()
+    
+    unpersist_addresses = Dictionary.[int, object]()
+    
+    mutable root : InnerDbRoot
+    
+    mutable use_bases_changed : bool  
+    
+    mutable list_types : List.[string]
+    
+    mutable mmf : MemoryMappedFile  
+    
+    mutable accessor : MemoryMappedViewAccessor  
+          
+    public Dispose(): void
+      
+      when (mmf != null)
+      
+        open_bases.Remove(this)
+      
+        mmf.Dispose()                
+        
+        mmf = null                
+        
+        GC.SuppressFinalize(this)             
+        
+    public notWritedYet(obj : object) : bool
+    /*предотвращение повторной записи в транзакции неперсистных объектов*/  
+      writedInTransaction.Add(obj)
+        
+    public Address4(obj : object) : int
+          
+      unpersist_objects[obj]  
+      
+    public Register(obj: object, delta: int): void
+    
+      unpersist_addresses[delta] = obj
+      
+      unpersist_objects[obj] = delta
+      
+    public AlwaysLoaded(delta: int): object
+    
+      mutable res
+      
+      unpersist_addresses.TryGetValue(delta, out res)
+      
+      res
+                                    
+    public Commit(): void
+    
+      when(CurrentSize < UsingSize)
+      
+        Resize((UsingSize * GrowthRate) :> int)
+    
+      for(mutable i = 0; i < transaction_objects.Count; ++i)
+      
+        transaction_objects[i].Save()      
+        
+      transaction_objects.Clear()
+      
+      writedInTransaction.Clear()
+      
+      when (use_bases_changed)
+      
+        use_bases_changed = false
+        
+        root.bases = write_raw(use_base_names,root.bases)
+                
+      SaveDataRoot()      
+     
+    public Cancel() : void
+    
+      root = load(0) 
+      
+      foreach(obj in transaction_objects)
+        
+        obj.SetStatus(ObjectStatus.correct)
+        
+      transaction_objects.Clear()        
+    
+    mutable size_ : int //текущий размер        
+    
+    public CurrentSize: int
+      get
+        size_
+        
+    public RootIndex : int    
+      get
+        root.d_root_obj                                
+      set
+        root.d_root_obj = value
+            
+    public Root : IPersist    
+      get
+        LoadPersist(RootIndex >> 2) //RootIndex has unpacked address
+      set              
+        RootIndex = value.Address
+                
+    public UsingSize : int
+      get
+        root.d_new                
+    
+    HashIndex4(obj_address : int) : int
+      
+      obj_address / 4 % hash_objects.Length
+    
+    Registered(obj_address : int) : IPersist            
+    /*return registered object or null*/                                
+      def search(lst)
+        | head :: _ when head.Address == obj_address => head
+        | _ :: tail => search(tail)
+        | _   => null        
+        
+      search(hash_objects[HashIndex4(obj_address)])
+      
+    Register(obj : IPersist) : void
+    /*зарегистировать Persist объект*/  
+      def hash_index = HashIndex4(obj.Address)
+            
+      hash_objects[hash_index] = obj :: hash_objects[hash_index] ?? []        
+    
+    
+    public PackAddress4(obj: IPersist) : int
+           
+      mutable pack_addr
+      
+      when (obj != null)
+      
+        pack_addr = obj.Address >> 2
+      
+        when (obj.Dbase: object != this)
+      
+          when (!multibase)
+        
+            throw ArgumentException\
+            ($"$filename database shouldnt contain objects from other databases! Use Zdb[i] for opening.")
+        
+          mutable index = use_bases.IndexOf(obj.Dbase)
+        
+          when (index == -1)
+        
+            index = use_bases.Count
+          
+            use_bases.Add(obj.Dbase)
+          
+            use_base_names.Add(obj.Dbase.filename)
+          
+            use_bases_changed = true
+        
+          managerExtensions.setbits(ref pack_addr, 28, 4, index)
+        
+      pack_addr        
+        
+    db_from(pack_address : int) : Database
+    
+      def index = pack_address.db_index()
+      
+      mutable db = use_bases[index]
+      
+      when (db == null)
+      
+        db = Open(use_base_names[index])                   
+        
+        use_bases[index] = db
+        
+      db
+          
+    public LoadPersist(pack_address : int) : IPersist
+      
+      if (pack_address != 0)
+      
+        db_from(pack_address).Get(pack_address.db_delta())      
+      else
+        null
+      
+    public Add2Transact(obj : IPersist) : void
+      
+      transaction_objects.Add(obj)      
+      
+    Get(delta : int) : IPersist
+      
+      mutable obj = Registered(delta)
+                  
+      when(obj == null)
+          
+        mutable type : int
+        
+        accessor.Read(delta, out type)
+                  
+        obj = constructors[type](this, delta)
+          
+        Register(obj)
+        
+      obj
+      
+    public Resize(size: int) : void
+    
+      when(size_ != size)
+      
+        when (size < UsingSize)
+        
+          throw ArgumentException ("Database size should not be less using space!") 
+          
+        mmf.Dispose()
+        
+        size_ = size
+      
+        mmf = MemoryMappedFile.CreateFromFile(filename, FileMode.Open, filename, size_)
+        
+    public this(fname: string, size: int, types: DictTypes, multi: bool, open_all_now_: bool, clearData = false)
+      
+      outer_types = types
+      
+      multibase = multi
+      
+      filename = fname
+      
+      open_all_now = open_all_now_
+      
+      def fi = FileInfo(filename)            
+                  
+      size_ = [if (fi.Exists) fi.Length :> int else 0, size, DefaultInitSize].Max() 
+      
+      mmf = MemoryMappedFile.CreateFromFile(fname, FileMode.OpenOrCreate, filename, size_)        
+      
+      accessor = mmf.CreateViewAccessor()                
+      
+      hash_objects = array(size_ / 80)                
+      
+      open_bases.Add(this)
+        
+      if (fi.Exists && !clearData)
+      
+        root = load.[InnerDbRoot](0)                 
+      else        
+        root.d_new = Memblock.Create.[InnerDbRoot]().size                         
+        
+      when (multibase)        
+      
+        use_base_names = if (root.bases != 0)         
+        
+          load_raw(root.bases) :> List.[string]
+        else
+          List.[string]([filename])
+          
+        use_bases = List(use_base_names.Select(x => if (open_all_now) Open(x) else null))        
+            
+      updateTypes(types)  
+      
+      
+    protected override Finalize () : void    
+      
+      Commit()      
+              
+    public SaveDataRoot() : void       
+    /*сохраняет рабочую информацию базы */        
+      accessor.Write(Memblock.delta, ref root)   
+      
+    public Type2int(str_type: string): int
+    /*вернуть тип*/  
+      mutable i
+      
+      hash_types.TryGetValue(str_type, out i)
+      
+      i      
+      
+    updateTypes(dict: DictTypes) : void
+    /*синхронизирует типы сборки и базы данных*/
+      mutable has2save
+      
+      if (root.types == 0) //еще не создано
+      
+        list_types = List.[string]()
+        
+        list_types.Add("nullType") //0-типа быть не должно!
+        
+        constructors.Add((_, _) => throw 
+          ArgumentException ("Invalid object type id!")) 
+        
+        has2save = true
+        
+        foreach(kv in dict)
+        
+          constructors.Add(kv.Value)
+                    
+          list_types.Add(kv.Key)
+      else
+        mutable constr
+        
+        def known_types = HashSet()
+        
+        list_types = load_raw(root.types) :> List[string]
+        
+        foreach(tstr in list_types)
+        
+          unless (dict.TryGetValue(tstr, out constr))
+          
+            constr = null
+            
+          constructors.Add(constr)
+          
+          known_types.Add(tstr)
+          
+        foreach(kv in dict)
+        
+          unless(known_types.Contains(kv.Key))
+          
+            list_types.Add(kv.Key)
+            
+            constructors.Add(kv.Value)
+            
+            has2save = true
+            
+      when (has2save)
+      
+        root.types = write_raw(list_types, root.types) 
+        
+      foreach(ty in list_types with i)
+      
+        hash_types[ty] = i
+    
+    alloc[T](leng : int, count = -1) : int       
+    /*рассчитать смещение массива и разметить: leng - резервиемый, count - реальный */        
+      mutable block = Memblock.Create.[T](leng)
+      
+      mutable delta = try_from_free(block.size)
+        
+      when (delta == 0)            
+        
+        delta = root.d_new            
+        
+        root.d_new += block.size                
+        
+        when(CurrentSize < root.d_new)
+      
+          Resize((root.d_new * GrowthRate) :> int)          
+          
+      when (count != -1)
+        
+        block = Memblock.Create.[T](count) 
+        
+      accessor.Write(delta, ref block)            
+      
+      delta                
+        
+    public calc_alloc[T]() : int       
+    /*рассчитать место для типа  */                    
+      def delta = root.d_new            
+      
+      root.d_new += Memblock.Create.[T](1).size                                    
+      
+      delta 
+      
+    public free(delta_block : int) : void       
+    /*освободить массив по смещению array_index */        
+      def delta = Memblock.delta + delta_block    
+      
+      accessor.Write(delta, root.d_free)        
+      
+      root.d_free = delta_block        
+        
+    try_from_free(need_size : int) : int           
+    /*попытаться получить свободный блок*/
+      when (root.d_free != 0)
+            
+        mutable o             
+        
+        mutable prev_delta = 0            
+        
+        mutable free_delta = root.d_free
+            
+        while (free_delta != 0)                                
+        
+          accessor.Read.[Memblock](free_delta, out o)
+                
+          when (o.size >= need_size)                    
+          
+            if (prev_delta != 0)                    
+              //смещение следующего за free
+              mutable next_free : int                        
+              
+              accessor.Read(Memblock.delta + free_delta, out next_free)                        
+              
+              accessor.Write(Memblock.delta + prev_delta, ref next_free) //записать предыдущему              
+            else //это первый блок
+              root.d_free = 0                  
+              
+            return free_delta
+                    
+          prev_delta = free_delta                
+          
+          accessor.Read(Memblock.delta + free_delta, out free_delta)                             
+      0
+      
+    public write_raw(obj : object, mutable delta : int) : int
+    /*запись чего-то сериализуемого в базу*/  
+      def ms = MemoryStream()      
+      
+      formatter.Serialize(ms, obj)      
+      
+      ms.Close()                  
+      
+      write_arr(ms.GetBuffer(), delta, obj)
+            
+    public SetNull(delta: int): void
+      
+      accessor.Write(delta, null_)
+      
+    public write[T](mutable dinfo : T, mutable delta : int) : int where T:struct
+    /*записать dinfo в блок по смещению delta */            
+      when (delta == 0)            
+      
+        delta = alloc.[T](1)              
+        
+      accessor.Write(delta + Memblock.delta, ref dinfo)  
+      
+      delta
+      
+    public write[T](mutable dinfo : T, mutable delta : int, type_id : int) : int where T:struct
+    /*записать dinfo в блок по смещению delta */            
+      when (delta == 0)            
+      
+        delta = alloc.[T](1)               
+        
+      accessor.Write(delta + Memblock.delta, ref dinfo)
+      
+      mutable t = type_id
+      
+      accessor.Write(delta, ref t)                  
+      
+      delta
+                
+    public write_arr[T](arr : array[T], mutable delta: int, obj : object)  : int where T:struct
+    /*записать arr в блок по смещению delta */
+      def count = arr?.Length
+      
+      mutable block : Memblock                            
+        
+      if (delta == 0)        
+        //obj известен Zdb?				    
+        unless(obj != null && unpersist_objects.TryGetValue(obj, out delta))                                        
+          
+          delta = alloc.[T](0)
+          
+          Register(obj, delta)          
+          
+          block.setArr.[T](0, 0)
+      else                                                    
+        accessor.Read(delta, out block)   
+        
+      mutable arr_delta = block.arr_delta
+      
+      mutable arr_count = block.Count.[T]()              
+                                
+      if (arr_count < count)
+            
+        when (arr_delta != 0)
+            
+          free(arr_delta)                  
+          
+        arr_count = if (MinimazeSize || typeof(T) == typeof(byte))          
+      
+          count
+        else
+          if (count == 0)
+            0
+          else if (count < 100)
+            count * 2
+          else
+            (count * 1.5) :> int
+            
+        arr_delta = alloc.[T](arr_count, count)                
+            
+        block.setArr.[T](arr_delta, arr_count)
+            
+        accessor.Write(delta, ref block)                    
+          
+      else when (arr_count != count)                  
+        //записать измененный размер
+        block.setArr.[T](0, count)
+                              
+        accessor.Write(arr_delta, ref block)                
+                 
+      when(arr_delta != 0)        
+      
+        accessor.WriteArray(arr_delta + Memblock.delta, arr, 0,  count)                
+        
+      delta
+        
+    public write_string(str : string, mutable delta : int) : int
+    /*записать str в блок по смещению delta */                  
+      def arr = str.ToCharArray()
+      
+      def count = arr?.Length
+        
+      if (delta == 0)        
+      
+        delta = alloc.[char](count)  
+      else                                    
+        mutable block : Memblock                
+        
+        accessor.Read(delta, out block)           
+          
+        def size = block.Count.[char]()
+                
+        if (size < count)
+        
+          free(delta)    
+          
+          delta = alloc.[char](count)
+        else                              
+          when (size != count)  
+          
+            mutable requiest = Memblock.Create.[char](count)
+          
+            accessor.Write(delta, ref requiest)                
+                 
+      when(delta != 0)        
+      
+        accessor.WriteArray(delta + Memblock.delta, arr, 0,  count)  
+        
+      delta
+              
+    public load_raw(delta : int) : object
+    /*чтение чего-то сериализуемого из базы*/        
+      def byte_arr = load_arr.[byte](delta)            
+      
+      formatter.Deserialize(MemoryStream(byte_arr))            
+        
+    public load[T](delta : int) : T where T:struct              
+    /*загрузить первое T из блока по смещению delta*/        
+      mutable dinfo        
+      
+      accessor.Read.[T](delta + Memblock.delta, out dinfo)        
+      
+      dinfo
+        
+    public load_arr[T](delta : int) : array[T]  where T:struct
+    /*загрузить массив T из блока по смещению delta*/        
+      mutable dinfo: Memblock         
+      
+      accessor.Read(delta, out dinfo) 
+      
+      def arr_delta = dinfo.arr_delta
+      
+      accessor.Read(arr_delta, out dinfo)
+      
+      def count = dinfo.Count.[T]()
+      
+      def res = array(count)        
+      
+      accessor.ReadArray.[T](arr_delta + Memblock.delta, res, 0,  count)        
+      
+      res
+        
+    public load_string(delta : int) : string              
+      
+      mutable dinfo : Memblock         
+      
+      accessor.Read(delta, out dinfo) 
+      
+      def size = dinfo.Count.[char]()
+      
+      def res = array(size)        
+      
+      accessor.ReadArray.[char](delta + Memblock.delta, res, 0,  size)        
+      
+      string(res)
+        
+            

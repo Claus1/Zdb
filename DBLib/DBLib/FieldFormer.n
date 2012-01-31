@@ -1,0 +1,573 @@
+﻿#pragma indent
+#pragma warning disable 10005
+
+using Nemerle
+using Nemerle.Collections
+using Nemerle.Compiler
+using Nemerle.Text
+using Nemerle.Utility
+using Nemerle.Compiler.Parsetree
+using Nemerle.Compiler.Typedtree
+using Nemerle.Extensions
+
+using System;
+using System.Collections.Generic
+using System.Linq
+
+
+namespace DBLib
+
+  class FieldFormer
+  /*делает работу по генерации для поля/свойства*/
+    typeBuilder :TypeBuilder    
+    
+    fld_name : Name    
+    fld_type : PExpr 
+        
+    mode : Mode
+    typer : Typer
+    
+    variant_mode : bool
+    
+    mutable block : TypeBuilder    
+    mutable man : ManagerClass
+    mutable refer : PExpr    
+    mutable exchange_struct : Name   
+    mutable exchange : PExpr         
+    mutable var_has2save : PExpr
+    mutable str_has2save : string            
+    
+    mutable loaded : PExpr    
+    mutable loc : Location
+    
+    
+    mutable load_control :bool 
+    mutable save_control : bool
+    mutable load_verify : bool
+    mutable save_verify : bool
+    
+    public mutable error_found = false
+    public mutable save_block : PExpr 
+    public mutable load_block : PExpr 
+    public mutable marked_as_private: bool
+            
+    public Proccess(): void
+            
+        if (typeDetect())
+          when (mode == Mode.SER)
+          
+            Message.Warning(loc, "The field supports fast serialization (ZX, Zx).")
+        else
+          unless (error_found)
+          
+            create_ser()          
+            
+            when (mode != Mode.SER)                              
+              Message.Warning(loc, "The field is stored only. by Net serialization (ZS, Zs).")
+          
+    fieldTypes(ty : TypeInfo) : Seq[TypeInfo]
+    
+      def fields = match (ty)
+      
+        | ty is TypeBuilder =>               
+          ty.GetParsedMembers().OfType.[ClassMember.Field]().Select(f => typer.BindFixedType(f.ty).TypeInfo)              
+                             
+        | _ => ty.GetFields(BindingFlags.Public %| BindingFlags.NonPublic %| BindingFlags.Instance)\
+                  .Select(x => x.GetMemType().TypeInfo)          
+        
+      fields.Where(_ != null)
+        
+    isPrimitiveValue(ty : TypeInfo) : bool                          
+        
+      ty.IsValueType && (ty.IsPrimitive || fieldTypes(ty).All(isPrimitiveValue))
+                    
+    typeDetect() : bool                                                
+      
+      Macros.DefineCTX(typer)   
+      
+      mutable ti = typer.BindFixedType(fld_type) 
+      
+      if  (ti.TryRequire(<[ttype: IPersist]>) || ti.TypeInfo.isPersist())
+        create_simple_ref()
+      else
+        match (fld_type)        
+          | Ref => 
+            def tname = fld_type.ToString()
+          
+            if (tname == "string")
+              
+              create_string_prop()
+            else                                    
+              when (isPrimitiveValue(ti.TypeInfo))               
+                
+                create_value()                                                          
+    
+          | GenericSpecifier(_, generics) =>                                       
+            
+            def gen_types = generics.Map(x => typer.BindFixedType(x))
+          
+            def gt1 = gen_types.Nth(0)
+          
+            if (generics.Count() == 2)                                    
+            
+              def gt2 = gen_types.Nth(1)
+          
+              when (gt1.TypeInfo.isPersist() || gt2.TypeInfo.isPersist())
+              
+                if (ti.TryRequire(<[ttype: IEnumerable[KeyValuePair[$gt1,$gt2]] ]>))                          
+                  
+                  create_pair_container(gt1, gt2)                             
+                else
+                  error_found = true
+                  
+                  Message.Error(loc, "The type can not be correctly processed. IEnumerable[KeyValuePair[_,_]] is not found.")              
+            else 
+              if (generics.Count() == 1 && ti.TryRequire(<[ttype: IEnumerable[$(gt1)] ]>))
+                
+                def nlist = ti.TryRequire(<[ttype: list[$(gt1)] ]>)
+                
+                if (isPrimitiveValue( gt1.TypeInfo))
+                    
+                  create_value_container(nlist, generics)
+                else                   
+                   when (gt1.TypeInfo.isPersist())                                  
+                     
+                     create_ref_container(nlist, generics)                                                                         
+              else
+                when (gen_types.Exists(x => x.TypeInfo.isPersist()))
+                  
+                  error_found = true        
+                  
+                  Message.Error(loc, "The template contains IPersist type, but IEnumerable[_] is not found.")                  
+          | _ => {} 
+        
+      block != null
+          
+    create_pair_container(gt1 : FixedType, gt2: FixedType) : void
+      
+      save_control = true
+      
+      load_control = true
+      
+      save_verify = true
+      
+      load_verify = true
+      
+      registration("int")            
+           
+      def fld_save(fld, ty)
+        if (ty.isPersist())
+          <[ if (el.$(fld:dyn) != null)	datamap.PackAddress4(el.$(fld:dyn)) else 0 ]>          
+        else 
+          if (ty.ToString() == "string")
+            <[datamap.write_string(el.$(fld:dyn), 0)]>
+          else
+            if (isPrimitiveValue(ty))
+              <[el.$(fld:dyn);]>
+            else
+              <[datamap.write_row(el.$(fld:dyn), 0)]>
+              
+      def fld_load(fld, ty)
+        if (ty.isPersist())
+          <[ if (el.$(fld:dyn) != 0) $(ty.ToString():dyn).load(datamap, el.$(fld:dyn)) else null ]>          
+        else           
+          if (ty.ToString() == "string")
+            <[datamap.load_string(el.$(fld:dyn))]>
+          else
+            if (isPrimitiveValue(ty))
+              <[el.$(fld:dyn)]>
+            else
+              <[datamap.load_row(el.$(fld:dyn))]>
+      
+      def type4(ty)
+        if (isPrimitiveValue(ty.TypeInfo))
+          str2expr(ty.ToString())
+        else
+          str2expr("int")          
+      
+      save_block = <[          
+        def arr_list = System.Collections.Generic.List();
+          
+				mutable addr;
+				  
+				when($refer != null)
+				  
+				  foreach(el in $refer)
+				    
+					  arr_list.Add(KeyValuePair($(fld_save("Key", gt1.TypeInfo)), $(fld_save("Value", gt2.TypeInfo))));
+					    
+				$exchange = datamap.write_arr.[KeyValuePair[$(type4(gt1)), $(type4(gt1))] ](arr_list.ToArray(),$exchange, $refer);				  
+			]>
+								
+				
+      load_block = <[
+        $refer = $fld_type();
+							    
+				when ($exchange != 0)										
+								
+					foreach(el in datamap.load_arr.[KeyValuePair[$(type4(gt1)), $(type4(gt1))]]($exchange))										
+									
+						$refer.Add($(fld_load("Key", gt1.TypeInfo)), $(fld_load("Value", gt2.TypeInfo)));
+      ]>
+      CreateProperField()   
+      
+    create_simple_ref() : void  
+      
+      save_control = true
+      
+      load_control = true
+            
+      registration("int")            
+             
+      load_block = <[
+              
+        when ($exchange != 0)
+        
+          $refer = $fld_type.load(datamap, $exchange);
+      ]>
+      
+      save_block = <[$exchange = datamap.PackAddress4($refer);]>
+       
+      CreateProperField()            
+          
+    create_ser(): void
+    
+      save_control = true
+      
+      load_control = true
+      
+      save_verify = true
+      
+      load_verify = true
+      
+      registration("int")
+      
+      save_block = <[                  
+          $exchange = datamap.write_raw($refer, $exchange);                   
+				]>
+        
+      load_block = <[
+        when ($exchange != 0)        
+	         $refer = datamap.load_raw($exchange) :> $fld_type;
+	      ]>
+            
+      CreateProperField()    
+          
+    create_value_container(nlist: bool, gen_types : list[PExpr]) : void
+      
+      save_control = true
+      
+      load_control = true
+      
+      save_verify = true
+      
+      load_verify = true
+      
+      registration("int")            
+      
+      def elem_type = gen_types.Head
+      
+      save_block = <[ 
+      
+        def arr = if($refer != null) $refer.ToArray() else null;        
+        
+        $exchange = datamap.write_arr.[$elem_type](arr, $exchange, $refer)         
+      ]>
+      
+      load_block = if (nlist)
+       <[
+        $refer = [];
+        
+         when ($exchange != 0)
+         {
+            def arr = datamap.load_arr.[$elem_type]($exchange);        
+            
+					  for(mutable i = arr.Length - 1; i >= 0; --i )
+
+					    $refer ::= arr[i]
+				 }
+			  ]>
+      else
+       <[
+        $refer = if ($exchange != 0)
+        
+					$fld_type(datamap.load_arr.[$elem_type]($exchange)) 
+				else
+					$fld_type()
+		  ]>
+      
+      CreateProperField()
+						
+    create_ref_container(nlist: bool, gen_types : list[PExpr]) : void
+      
+      save_control = true
+      
+      load_control = true
+      
+      save_verify = true
+      
+      load_verify = true
+      
+      registration("int")            
+      
+      def elem_type = gen_types.Head 
+            
+      save_block = <[ 
+       
+          def arr_list = System.Collections.Generic.List();				  
+          
+				  when($refer != null)				  				    
+				  
+				    foreach(el in $refer)				    									
+				    
+					    arr_list.Add(if (el != null) datamap.PackAddress4(el) else 0);
+						
+				  $exchange = datamap.write_arr.[int](arr_list.ToArray(), $exchange, $refer);				  
+				]>
+				
+      load_block = if (nlist)              
+        <[
+		      $refer = [];
+							    
+					when ($exchange != 0)										
+					{ 
+					  def arr = datamap.load_arr.[int]($exchange);
+					  
+					  for(mutable i = arr.Length - 1; i >= 0; --i )
+            {
+					    def el_address = arr[i];					    						
+						
+							$refer ::= if (el_address != 0) $elem_type.load(datamap, el_address) else null
+						}
+					}
+				 ]>
+      else
+        <[
+		      $refer = $fld_type();
+							    
+					when ($exchange != 0)										
+					
+						foreach(el_address in datamap.load_arr.[int]($exchange))										
+						
+							$refer.Add(if (el_address != 0) $elem_type.load(datamap, el_address) else null)
+				 ]>
+              
+      CreateProperField()
+				
+    create_value() : void      
+    /*генерация для value типов полей*/          
+      registration($"$fld_type")                
+        
+      CreateProperField()
+		   
+    create_string_prop() : void 
+    /*генерация для строк */            
+      save_control = true
+      
+      load_control = true
+      
+      registration("int")            
+                        
+      save_block = <[  $exchange = datamap.write_string($refer, $exchange); ]>
+      
+      load_block = <[$refer = if ($exchange != 0)  datamap.load_string($exchange) else null;]>
+                              
+      CreateProperField()
+	            
+    str2expr(name : string): PExpr
+    /*генерация PExpr для составных имен*/
+      PExpr.FromQualifiedIdentifier((man,name))
+      
+    public this(tb : TypeBuilder, name : Name, type : PExpr, loc_: Location, tp : Typer)
+    /*variant field constructor*/
+      fld_name = name
+      
+      fld_type = type
+      
+      loc = loc_
+      
+      typeBuilder = tb
+      
+      mode = Mode.DB
+      
+      typer = tp
+      
+      variant_mode = true
+      
+      init()
+      
+    public this(tb : TypeBuilder, e : PExpr, param : Mode, tp : Typer)
+    /*class field constructor*/      
+      match (e)        
+        | <[ $(name : name) : $type ]> => 
+          fld_name = name
+          fld_type = type
+          loc = e.Location      
+          typeBuilder = tb
+          mode = param
+          typer = tp
+          
+          init()
+          
+        | _ =>  
+          error_found = true
+          Message.Error(loc, <#Expected: name : type #>)           
+      
+    init() : void
+    
+      man = typeBuilder.Manager                          
+      
+      exchange_struct = Macros.UseSiteSymbol(typeBuilder.estruct())            
+      
+      if(variant_mode)
+        
+        refer = <[$($"$fld_name" : usesite)]>             
+        
+        exchange = <[_exchange.$($"$fld_name" : usesite) ]> 
+      else      
+        exchange = str2expr($"_exchange.$fld_name") 
+        
+        refer = str2expr($"_db_service.$fld_name")
+      
+        loaded = str2expr($"_db_service.$(fld_name)_loaded")  
+      
+        str_has2save = $"_db_service.save_$(fld_name)"                  
+      
+        var_has2save = str2expr(str_has2save)
+        //add field 2 class
+        mutable block = typeBuilder.UserData["fields"] :> list[FieldFormer]       
+        
+        when (block == null) 
+          typeBuilder.AddImplementedInterface(<[IPersist]>)
+          
+          typeBuilder.GetModifiers().AddCustomAttribute(<[Persist]>)
+          
+          block = []              
+          //добавить в список явных постоянных классов             
+          managerExtensions.AddPerst(typeBuilder)                          
+          
+        typeBuilder.UserData["fields"] = this :: block
+      
+    CreateProperField() : void
+      
+      if (variant_mode)
+        when (save_block == null)          
+          
+          save_block = <[$exchange = $refer;]>      
+          
+          load_block = <[$refer = $exchange;]>
+      else
+        when (save_block == null)
+        
+          save_block = <[]>
+      
+          load_block = <[]>
+          
+        when (save_verify)
+        
+          save_block = <[          
+          
+            if (datamap.notWritedYet($refer))
+              
+              $save_block;
+            else 
+              when ($exchange == 0)				    
+              
+				        $exchange = datamap.Address4($refer);
+          ]>
+          
+        when (load_verify)
+        
+          load_block = <[          
+          
+            $refer = (datamap.AlwaysLoaded($exchange)) :> $fld_type;
+            
+            when (null == $refer)
+            {  
+              $load_block;      
+              
+              datamap.Register($refer, $exchange);
+            }
+          ]>
+          
+        when (load_control)
+          
+          load_block = <[
+            unless($loaded)
+            {
+               $loaded = true;
+               
+               $load_block
+            }]>            
+            
+          save_block = <[$loaded = true; $save_block]>
+     
+        when (save_control)
+          
+          save_block = <[
+          
+            when($var_has2save)
+            { 
+              $var_has2save = false;
+              
+              $save_block
+            }]>                                  
+          
+          def free_blocks = typeBuilder.UserData["free_refs"] :> list[PExpr] ?? []       
+        
+          typeBuilder.UserData["free_refs"] = <[ $(fld_name : name) = null;]> :: free_blocks               
+          //код сохранения поля                  
+          def save_blocks = typeBuilder.UserData["saves"] :> list[PExpr] ?? [] 
+          
+          typeBuilder.UserData["saves"] = save_block :: save_blocks                                                                
+        
+        def saveAtPropSet = if (save_control) <[$var_has2save = true;]> else <[]>
+        
+        def loadPropSet = if (load_control) <[$loaded = true;]> else <[]>                
+        
+        def prop = <[decl:
+          
+            $(fld_name : name) : $fld_type 
+            {     
+			        get {												 
+			          $load_block;
+				        $refer
+				      }
+			        set	{
+			          SetStatus(ObjectStatus.different);
+			          
+			          $saveAtPropSet;
+			          
+			          $loadPropSet;
+			          
+				        $refer = value
+				      }
+			      }]>
+        unless (marked_as_private)
+          prop.Attributes |= NemerleModifiers.Public       			   
+			      
+        prop.Location = loc
+      
+        typeBuilder.DefineWithSource(prop)                           
+            
+    registration(type_ex :string) : void
+    /*добавляет и регистрирует в структурах поддержки СУБД*/                             
+      block = typeBuilder.tb_exchange_struct()              
+              
+      block.DefineWithSource (<[ decl: public mutable $(fld_name : name) : $(type_ex : dyn) ]>) 
+      
+      unless(variant_mode)
+      
+        block = typeBuilder.tb_service_struct() 
+      
+        block.DefineWithSource(<[decl: public mutable $(fld_name : name) : $fld_type ]>)   
+      
+        when (save_control)
+        
+          block.DefineWithSource (<[ decl: public mutable $($"save_$(fld_name)" : usesite) : bool ]>)
+                  
+        when (load_control)      
+        
+          block.DefineWithSource (<[ decl: public mutable $($"$(fld_name)_loaded" : dyn) : bool ]>)
+                    
+  

@@ -1,0 +1,10 @@
+C:\MyProjects\DBLib\DBLib\obj\Debug\ResolveAssemblyReference.cache
+C:\MyProjects\DBLib\DBLib\bin\Debug\DBLib.dll
+C:\MyProjects\DBLib\DBLib\bin\Debug\DBLib.pdb
+C:\MyProjects\DBLib\DBLib\obj\Debug\DBLib.dll
+C:\MyProjects\DBLib\DBLib\obj\Debug\DBLib.pdb
+C:\MyProjects\Zdb\DBLib\DBLib\bin\Debug\DBLib.dll
+C:\MyProjects\Zdb\DBLib\DBLib\bin\Debug\DBLib.pdb
+C:\MyProjects\Zdb\DBLib\DBLib\obj\Debug\ResolveAssemblyReference.cache
+C:\MyProjects\Zdb\DBLib\DBLib\obj\Debug\DBLib.dll
+C:\MyProjects\Zdb\DBLib\DBLib\obj\Debug\DBLib.pdb

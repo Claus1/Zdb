@@ -1,0 +1,744 @@
+﻿//
+// Zen Database Library for Nemerle
+// Copyright (c) 2012, George Dernovoy (g.dernovoy@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without modification,
+// are permitted provided that the following conditions are met:
+//
+//     * Redistributions of source code must retain the above copyright notice,
+//       this list of conditions and the following disclaimer.
+//     * Redistributions in binary form must reproduce the above copyright notice,
+//       this list of conditions and the following disclaimer in the documentation
+//       and/or other materials provided with the distribution.
+//     * Neither the name of the author nor the names of its contributors may be
+//       used to endorse or promote products derived from this software without
+//       specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+// ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+// WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+// ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+// ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+#pragma indent
+#pragma warning disable 10005
+
+using Nemerle
+using Nemerle.Collections
+using Nemerle.Compiler
+using Nemerle.Text
+using Nemerle.Utility
+using Nemerle.Compiler.Parsetree
+using Nemerle.Compiler.Typedtree
+using Nemerle.Extensions
+
+using System;
+using System.Collections.Generic
+using System.Linq
+
+using System.IO
+using System.Runtime.InteropServices
+using System.IO.MemoryMappedFiles
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Formatters.Binary;
+
+[assembly: Nemerle.Internal.OperatorAttribute ("DBLib", "put", true, 281, 280)]
+
+namespace DBLib
+  enum Mode    
+    | SER
+    | DB
+    
+  [MacroUsage(MacroPhase.BeforeTypedMembers , MacroTargets.Class)]\
+  macro Persist(typeBuilder : TypeBuilder)
+  
+    ClassFormer(typeBuilder).CreateExtClass()
+    
+    when (!managerExtensions.TableCreated)
+      managerExtensions.CreateTypeTable(Nemerle.Macros.ImplicitCTX())
+    
+  [MacroUsage(MacroPhase.BeforeInheritance , MacroTargets.Class)]\
+  macro Zv(typeBuilder : TypeBuilder)
+  
+    managerExtensions.AddPerst(typeBuilder)
+    typeBuilder.AddImplementedInterface(<[IPersist]>)        
+    
+  [MacroUsage(MacroPhase.BeforeTypedMembers , MacroTargets.Class)]\
+  macro Zv(typeBuilder : TypeBuilder)
+  
+    ClassFormer(typeBuilder).CreateExtVariant(Macros.ImplicitCTX())
+    
+    when (!managerExtensions.TableCreated)
+      managerExtensions.CreateTypeTable(Nemerle.Macros.ImplicitCTX())    
+    
+  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Method)]\
+  macro ZT(typeBuilder : TypeBuilder, _ : ClassMember.Function, expr : PExpr)\
+  syntax ("ZT", expr)
+    
+    FieldFormer(typeBuilder, expr,  Mode.DB, Macros.ImplicitCTX())
+    
+  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Method)]\
+  macro Zt(typeBuilder : TypeBuilder, _ : ClassMember.Function, expr : PExpr)\
+  syntax ("Zt", expr)
+    
+    FieldFormer(typeBuilder, expr,  Mode.DB, Macros.ImplicitCTX()) <- {marked_as_private = true;}
+   
+    
+  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Method)]\
+  macro ZS(typeBuilder : TypeBuilder, _ : ClassMember.Function, expr : PExpr)\
+  syntax ("ZS", expr)
+  
+    FieldFormer(typeBuilder, expr, Mode.SER, Macros.ImplicitCTX())
+    
+  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Method)]\
+  macro Zs(typeBuilder : TypeBuilder, _ : ClassMember.Function, expr : PExpr)\
+  syntax ("Zs", expr)
+  
+    FieldFormer(typeBuilder, expr, Mode.SER, Macros.ImplicitCTX()) <- {marked_as_private = true;}
+          
+  macro Zdb1 (path, size = 0) 
+    
+    <[ Database.Active = Database.Find($path) ?? Database($path, $size, TableTypes.dic, false, false); 
+       Database.Active
+     ]> 
+    
+  macro Zdb (path, size = 0) 
+    
+    <[ Database.Active = Database.Find($path) ?? Database($path, $size, TableTypes.dic, true, false);
+       Database.Active
+     ]> 
+    
+  macro Zdbi (path, size = 0) 
+    
+    <[ Database.Active = Database.Find($path) ?? Database($path, $size, TableTypes.dic, true, true); 
+       Database.Active
+     ]> 
+    
+  macro ZdbClear(path, size = 0) 
+    
+    <[ 
+      Database.Active = Database.Find($path) ?? Database($path, $size, TableTypes.dic, true, false, true);
+      Database.Active
+     ]> 
+    
+  macro @put(expr1 : PExpr)
+      
+    <[$expr1 = $expr1;]>
+     
+
+  module managerExtensions   
+  
+    perst_hash = HashSet.[TypeInfo]()   
+    
+    public mutable TableCreated : bool
+    
+    public tb_exchange_struct(this tb : TypeBuilder) : TypeBuilder
+      
+      tb.DeclaredNestedTypes.First(x => x.Name == tb.estruct())
+    
+    public estruct(this tb : TypeInfo) : string
+    /*name for embedded db struct*/
+      if (tb.isPersistWithTheSameFieldsAsParent())
+        
+        $"exchange_$(tb.parentWithAddedDBFields())"
+      else
+        def tbs = $"$tb"
+        
+        if (tbs.Contains(".")) //variant        
+          $"exchange_$(tbs.Split('.')[1])"
+        else
+          $"exchange_$(tbs)"
+    
+    public tb_service_struct(this tb : TypeBuilder) : TypeBuilder
+      
+      tb.DeclaredNestedTypes.First(x => x.Name == "db_service_struct")
+    
+    public AddPerst(ti : TypeInfo) : void
+      
+      perst_hash.Add(ti)
+      
+    public isPersist(this ti : TypeInfo) : bool                               
+      
+      (ti :: ti.GetSuperTypes().Map(_.TypeInfo)).Exists(perst_hash.Contains(_))          
+      
+    public parentWithAddedDBFields(this ti : TypeInfo) : TypeInfo
+      
+      (ti.GetSuperTypes().Map(_.TypeInfo)).Find(perst_hash.Contains(_)).Value
+      
+    public isPersistWithTheSameFieldsAsParent(this ti : TypeInfo) : bool  
+      
+      isPersist(ti) && !perst_hash.Contains(ti)
+      
+    public HasPersistParent(this ti : TypeInfo) : bool                            
+        
+      ti.GetSuperTypes().Map(_.TypeInfo).Exists(_.isPersist())  
+      
+    public getbits(this data : int, delta : int,size : int): int    
+     
+      ((data >> delta) & ((1 << size) - 1))							
+		
+    public setbits(data: ref int, delta : int , size : int ,val : int): void
+      
+      mutable i = 1
+      
+      mutable count = 0
+		
+      while (count < size)
+        
+        if ((val & i) != 0)
+        
+          data |= i << delta
+        else
+          data &= ~(i << delta)
+				
+        ++count
+        
+        i <<= 1 
+        
+    public db_delta(this data : int) : int    
+    //смещение в базе 
+      data.getbits(0,28) << 2
+      
+    public db_index(this data : int) : int    
+    //индекс базы
+      data.getbits(28,4)  
+      
+    public CreateTypeTable(typer : Typer): void
+           
+      TableCreated = true
+      
+      mutable init = []
+      
+      def types = typer.Manager.NameTree.NamespaceTree.GetTypeBuilders(onlyTopDeclarations=true)
+      
+      foreach (type in types) 
+      
+        def tstr = type.ToString()
+             
+        when(type.isPersist())
+        
+          if (type.Ast is TopDeclaration.Variant)
+          
+            foreach(vot in type.GetVariantOptions()) 
+              
+              def forced_name = PExpr.FromQualifiedIdentifier(typer.Manager, $"$vot")
+              
+              def init_type = <[                 
+                dic.Add($($"$vot" : string),  (db, addr) => $forced_name.load(db, addr));
+              ]>          
+              init ::= init_type               
+          else    
+            def init_type = <[                              
+               dic.Add($(tstr : string),  (db, addr) => $(type.ParsedTypeName)(db, addr));
+             ]>          
+            init ::= init_type 
+              
+          unless (perst_hash.Contains(type))
+        
+            ClassFormer(type).CreateExtClass()
+          
+      def tblClass = <[ decl:
+          module TableTypes
+          {
+            public dic  : DictTypes = DictTypes();
+            this()
+            {              
+              ..$init
+            }
+          }
+        ]>;
+
+      typer.Env.Define(tblClass).Compile()
+            
+  type HashChilds = Hashtable[string, list[TypeInfo]]    
+  
+  public enum ObjectStatus
+    | correct = 0
+    | different = 1
+    | deleted = 2
+    | clone = 4
+    
+  class ClassFormer
+  /*генератор основных тел классов и вариантов*/
+    name : PExpr
+    free_refs : PExpr
+    tb : TypeBuilder    
+    estruct : string
+    
+    public this(tb_ : TypeBuilder)  
+      tb = tb_            
+          
+      name = tb.ParsedTypeName            
+      
+      estruct = tb.estruct()
+                 
+      free_refs = <[ {..$(tb.UserData["free_refs"] :> list[PExpr] ?? [])} ]>
+      
+    public CreateExtClass() : void                  
+     
+      AddMembers(ClassConstructors)
+      
+      if (tb.HasPersistParent())
+        AddMembers(ClassBlockChild)
+        
+        unless (tb.isPersistWithTheSameFieldsAsParent())        
+          AddMembers(ClassBlockAddFields)                
+      else
+        AddMembers(ClassBlockRoot)
+      
+      foreach(fld in tb.UserData["fields"] :> list[FieldFormer])      
+        fld.Proccess()
+      
+      unless (tb.isPersistWithTheSameFieldsAsParent())  
+      
+        tb.tb_exchange_struct().Compile()
+        
+        tb.tb_service_struct().Compile()
+        //сохранения добавлять только здесь, после fld.Proccess()
+        def save_block = tb.UserData["saves"] :> list[PExpr] ?? [] 
+      
+        tb.DefineWithSource(if (!tb.HasPersistParent())
+          <[decl:virtual protected get_exchange(): void            
+            {            
+              ..$save_block
+            }
+           ]>
+        else
+          <[decl:override protected get_exchange(): void
+            {
+              {..$save_block}
+              
+              base.get_exchange();
+              
+              _exchange.exchange_base = base._exchange
+            }
+           ]>)         
+        
+                    
+    public CreateExtVariant(tp : Typer) : void
+      
+      AddMembers(VariantBlockRoot)            
+      
+      foreach (ty in tb.DeclaredNestedTypes)
+      
+        managerExtensions.AddPerst(ty)
+        
+        def cfVo = ClassFormer(ty)
+        
+        cfVo.DoVariantOption()
+                
+        mutable save_block = []
+        mutable load_block = []
+        
+        foreach(member in ty.GetParsedMembers())
+          match (member)
+            | ClassMember.Field(name = n, ty = t) =>
+                def nstr = $"$n"
+                
+                def fld = FieldFormer(ty, Macros.UseSiteSymbol(nstr), t, member.Location, tp)
+                
+                fld.Proccess()
+                
+                def nstr_ = $"__$(nstr)__"
+                
+                unless(fld.error_found)          
+                  
+                  save_block ::= <[ $(fld.save_block) ]> 
+                  
+                  load_block ::= <[
+                  
+                    $(nstr_ : usesite) : 
+                    {                    
+                      mutable $(nstr : usesite);
+                      
+                      $(fld.load_block); 
+                      
+                      $(nstr : usesite)
+                    }]>                  
+                    
+            | _ => {}    
+            
+        ty.tb_exchange_struct().Compile()                     
+        
+        def forced_name = PExpr.FromQualifiedIdentifier(tp.Manager, $"$ty")
+        
+        cfVo.AddMembers(<[decl: class Dummy            
+        {
+            override public Save(): void
+            {             
+                mutable _exchange;                  
+                             
+                {..$save_block}
+              
+                address = datamap.write.[$(ty.estruct(): usesite)](_exchange, address, type_id());                                                              
+            }        
+            new public static load(datamap:Database, delta:int): $forced_name
+            /*загрузка объекта, не имеющего наследников  */
+            {               
+              if (delta != 0) 
+              {  
+                 def _exchange = datamap.load.[$(ty.estruct() : usesite)](delta);
+                 
+                 $forced_name(..$(load_block.Reverse())) <- {datamap = datamap; address = delta}
+              }
+              else
+                null
+            }
+        }]>)                                   
+          
+              
+    DoVariantOption() : void
+      
+      AddMembers(VariantBlockChild)
+    
+    AddMembers(block : ClassMember.TypeDeclaration): void
+    
+      foreach(member in block.td.GetMembers())
+        
+        tb.DefineWithSource(member)
+    
+    public VariantBlockRoot : ClassMember.TypeDeclaration      
+      get           
+        <[decl: class Dummy /*для копирования из него членов и методов*/             
+        {                  
+          //файл базы, откуда объект
+          //одновременно можно работать с несколькими базами                        
+          protected mutable datamap: Database;                        
+          //смещение в базе                        
+          protected mutable address: int;                    
+          
+          protected mutable status__ : ObjectStatus;          
+                    
+          virtual public Save(): void {}
+          
+          virtual public SavedClone(): IPersist {null}          
+          
+          virtual public Address : int
+          {  
+            get {0}            
+          }
+          
+          public this()
+          {
+            datamap = Database.Active
+          }
+          
+          public Dbase : Database
+          {
+            get 
+            {              
+              datamap
+            }            
+          }
+          
+          public Delete(): void
+          /*метит в базе как null*/
+          { 
+            SetStatus(ObjectStatus.deleted)            
+          }
+                    
+          public SetStatus(status : ObjectStatus) : void
+          {            
+              if (status == ObjectStatus.correct)
+              
+                status__ &= ~ObjectStatus.different
+              else                
+                when (status__ == ObjectStatus.correct)                   
+                
+                  Dbase.Add2Transact(this);
+                  
+                status__ |= status
+          }
+          
+          public static load(datamap:Database, delta:int): $name
+          /*загрузка объекта, не имеющего наследников  */
+          {                
+            if (delta != 0) 
+            
+              datamap.LoadPersist(delta) :> $name;
+            else
+              null
+          } 
+          
+          virtual public type_id(): int {0}                                 
+            
+    }]>
+    
+    public VariantBlockChild : ClassMember.TypeDeclaration      
+      get           
+        <[decl:      
+        class Dummy /*для копирования из него членов и методов*/
+        {           
+          public struct $(estruct : usesite) {}                                        
+                    
+          override public SavedClone(): IPersist          
+          { 
+            this
+          }          
+          override public Address : int
+          {  
+            get 
+            {
+              when (address == 0)
+              {
+                address = datamap.calc_alloc.[$(estruct : usesite)]();
+              
+                SetStatus(ObjectStatus.different);
+              }
+              address
+            }
+          }                                                  
+          
+          override public type_id(): int
+          {
+            datamap.Type2int($(tb.ToString() :string))
+          }                                   
+         }]>
+          
+    public ClassBlockRoot : ClassMember.TypeDeclaration      
+      get           
+        <[decl:      
+        class Dummy /*для копирования из него членов и методов*/
+        { 
+          protected mutable status__ : ObjectStatus;          
+          //файл базы, откуда объект
+          //одновременно можно работать с несколькими базами                        
+          protected mutable datamap: Database;                        
+          //смещение в базе                        
+          protected mutable address: int;
+          
+          public struct $(estruct : usesite) {}
+          
+          protected mutable _exchange : $(estruct : usesite);
+          
+          struct db_service_struct {}
+      
+          mutable _db_service : db_service_struct;                    
+          
+          //сохраняет объект
+          virtual public Save(): void
+          { 
+            if (status__ == ObjectStatus.deleted)
+              when (address != 0)
+              { //освободить сcылки
+                $free_refs; 
+                
+                datamap.free(address)
+              }
+            else
+              when(status__ == ObjectStatus.different)
+              {
+                get_exchange();
+              
+                address = datamap.write(_exchange, address, type_id());                                
+                
+                status__ = ObjectStatus.correct
+              }
+          }
+          
+          virtual public SavedClone(): IPersist          
+          { 
+            def clone = $name(datamap, datamap.load.[$(estruct : usesite)](address), address);
+            
+            clone.SetStatus(ObjectStatus.clone);
+            
+            clone
+          }
+          
+          virtual public Address : int
+          {  
+            get 
+            {
+              when (address == 0)
+              {
+                address = datamap.calc_alloc.[$(estruct : usesite)]();
+              
+                SetStatus(ObjectStatus.different);
+              }
+              address
+            }
+          }
+          
+          public Dbase : Database
+          {
+            get 
+            {              
+              datamap
+            }            
+          }
+          
+          public Delete(): void          
+          { 
+            SetStatus(ObjectStatus.deleted)            
+          }
+          
+          public SetStatus(status : ObjectStatus) : void
+          {            
+              if (status == ObjectStatus.correct)
+              
+                status__ &= ~ObjectStatus.different
+              else                
+              {  
+                when (status__ == ObjectStatus.correct)                   
+                
+                  Dbase.Add2Transact(this);
+                  
+                status__ |= status
+              }
+          }
+          
+          public static load(datamap:Database, delta:int): $name
+          /*загрузка объекта, не имеющего наследников  */
+          {                
+            if (delta != 0) 
+            
+              datamap.LoadPersist(delta) :> $name
+            else
+              null
+          } 
+          
+          virtual public type_id(): int
+          {
+            datamap.Type2int($(name.ToString() :string))
+          }                       
+  
+          virtual protected set_exchange() : void {}
+         }]>
+             
+    public ClassBlockChild : ClassMember.TypeDeclaration      
+      get                        
+        <[decl:      
+        class Dummy /*для копирования из него членов и методов*/
+        { 
+          new public static load(datamap:Database, delta:int): $name
+          /*загрузка объекта, не имеющего наследников  */
+          {                
+            if (delta != 0) 
+              datamap.LoadPersist(delta) :> $name
+            else
+              null
+          } 
+          
+          override public Address : int
+          {  
+            get 
+            {
+              when (address == 0)
+              {
+                address = datamap.calc_alloc.[$(estruct : usesite)]();
+              
+                SetStatus(ObjectStatus.different)
+              }
+              address
+            }
+          }
+          
+          override public SavedClone(): IPersist          
+          { 
+            def clone = $name(datamap, datamap.load.[$(estruct : usesite)](address), address);
+            
+            clone.SetStatus(ObjectStatus.clone);
+            
+            clone
+          }
+          
+          override public type_id(): int
+          {
+            datamap.Type2int($(name.ToString():string))
+          }                       
+         }]>
+    
+    public ClassConstructors : ClassMember.TypeDeclaration
+      get
+        <[decl:      
+        class Dummy /*для копирования из него членов и методов*/
+        {                                                         
+          //конструкторы
+          public this() 
+          {
+            datamap = Database.Active
+          }
+                                            
+          public this(dmap: Database)
+          {                
+            datamap = dmap;            
+          }                
+          public this(dmap: Database, addr:int)
+          {                
+            datamap = dmap;                            
+            
+            address = addr;                            
+            
+            _exchange = datamap.load.[$(estruct : usesite)](address);
+            
+            set_exchange()
+          }                            
+          public this(dmap: Database, data_class: $(estruct : usesite), addr:int)
+          {                
+            datamap = dmap;                            
+            
+            _exchange = data_class;                                            
+            
+            address = addr;
+            
+            set_exchange()
+          }
+        } ]>
+        
+          
+    public ClassBlockAddFields: ClassMember.TypeDeclaration
+      get        
+        def parent_struct = tb.BaseType.estruct()
+        
+        <[decl:              
+        
+        class Dummy /*для копирования из него членов и методов*/
+        { 
+          public struct $(estruct : usesite) 
+          {
+            public mutable exchange_base : $(parent_struct : usesite);
+          }          
+          new protected mutable _exchange : $(estruct : usesite);
+          
+          struct db_service_struct {}
+      
+          new mutable _db_service : db_service_struct;          
+          //не пытаться сделать  один корневой Save - параметр в datamap.write 
+          //должен быть правильно типизирован
+          override public Save(): void
+          { 
+            if (status__ == ObjectStatus.deleted)                          
+            
+              when (address != 0)
+              { //освободить сcылки
+                $free_refs; 
+                
+                datamap.free(address)
+              }
+            else
+              when(status__ == ObjectStatus.different)
+              {
+                get_exchange();
+                
+                address = datamap.write(_exchange, address, type_id());                
+                
+                status__ = ObjectStatus.correct
+              }
+          }          
+          override protected set_exchange() : void 
+          {
+            base._exchange = _exchange.exchange_base;
+            
+            base.set_exchange()
+          }
+                       
+        } ]> 
+    
+  
+  

@@ -1,0 +1,271 @@
+﻿#pragma warning disable 10005
+#pragma indent
+
+
+using System
+using System.IO
+using System.Collections.Generic 
+
+using Nemerle;
+using Nemerle.Collections
+using Nemerle.Compiler
+using Nemerle.Text
+using Nemerle.Utility
+using Nemerle.Extensions
+
+using DBLib
+
+public class D
+  public static n : List[string] = List.[string]()
+  public mutable y : int
+  
+[Zv]\
+public variant Var 
+  
+  | A 
+    r : string
+    s : double
+  | B 
+    z : int
+    next : Var
+	
+    
+enum test_enum
+  | a
+  | b
+  
+	  
+struct Zz
+  a : int
+  b : double
+  
+struct Gs
+  public i : int
+  public j : Zz
+    
+[Serializable()]\ 
+class Dum
+  f = "ser me"
+  g = 2  
+    
+  
+class Dum3: X
+  public j : int
+  
+
+  
+class Fg : X
+  
+  ZT plist : list.[X]
+  ZT g : Gs
+  ZT dict : Dictionary.[int, X]
+  str2 : string
+
+class G
+  ZT v : Var
+  ZT r : test_enum
+  
+class Y
+  ZS g : Dum
+  
+  ZT s : Var
+  
+  ZT px : X
+  
+  ZT ai : List.[X]
+  
+  
+  
+class X 
+   
+  public ui : int
+  
+  ZT s : string
+  
+  ZT s2 : list.[int]
+  
+  ZT n : List.[Y]
+        
+  ZS d : Dum
+
+  
+module Program 
+
+  n = "nx.bas" 
+  h = "hx.bas"  
+  
+  mutable err_found = false  
+  
+  test(message: string, res : bool): bool
+    
+    unless (res)                 
+      err_found = true      
+      Console.WriteLine($"Test error: $message") 
+    
+    res
+    
+  Resume(): void
+    unless(err_found)
+      Console.WriteLine("All tests ok!") 
+    
+    Console.ReadKey()    
+        
+  Create(dum3: Dum3 = null): Database                    
+            
+    def z = ZdbClear(n)            
+    
+    def va = Var.B(5, Var.A("var_a", 2.0))
+    
+    def a = Fg()
+    
+    a.s2 = [1,5,10]        
+    
+    def j = X() <- {s = "давай"}        
+    
+    a.dict = Dictionary() <- [5 = j, 4 = a]
+    
+    a.s = "ану ка"
+    
+    a.plist = [a, j]
+    
+    a.d = Dum()
+    
+    z.Root = a
+    
+    def l = List()
+    
+    def t = Y()
+    
+    t.ai = List()        
+    
+    t.px = dum3 //far object
+    
+    t.g = a.d
+    
+    t.s = va
+    
+    t.ai.Add(a)
+    
+    l.Add(t)
+    
+    a.n = l        
+    
+    z
+    
+  Open0(): void
+    //создать другую базу и передать объект z
+    def linked_z = ZdbClear(h)
+    
+    def dum3 = Dum3() <- {s = "from linked db"}
+    
+    linked_z.Root = dum3 
+    
+    def z = Create(dum3)
+    
+    //принудительно закрыть все бд
+    linked_z.Commit()
+    
+    z.Commit()
+    
+    linked_z.Dispose()                
+    
+    z.Dispose()
+
+  Open1() : void
+  
+    def z = Zdb(n)  
+    
+    def a = z.Root :> Fg
+    
+    when(test("Root is right", a != null))
+      
+      test("string save test", a.s == "ану ка")
+      
+      test("NList of values", a.s2 != null && a.s2 == [1,5,10])
+      
+      test("NList of persist", a.plist != null && a.plist.Head: object == a )
+    
+      when(test("Vocab is right", a.dict != null))
+    
+        test("Vocab info", a.dict.Count == 2)      
+      
+        test("Persist multi reference",a.dict[4]: object == a)
+    
+      a.dict.Remove(4)
+    
+      put a.dict
+    
+      def oy = if (a.n != null) a.n[0] else null
+    
+      when(test("List of persist", oy != null))
+      
+        test("linked database is lazy", Database.Find(h) == null)
+        
+        test("object from other db", oy.px != null && oy.px.s == "from linked db")
+        
+        test("linked database is open by ref", Database.Find(h) != null)
+    
+        test("multi refers to the serialized object", oy.g : object == a.d)
+    
+        when(test("Variant creation", oy.s != null))
+    
+          def var_b = (oy.s :> Var.B)
+      
+          when(test("Embedded variant", (var_b?.next :> Var.A) != null))
+      
+            oy.s = Var.B(4, null)  
+            
+    z.Commit()
+    
+    z.Dispose()
+          
+  Open2() : void
+  
+    def z = Zdb(n)  
+    
+    def a = z.Root :> Fg
+    
+    test("non-persist update", a.dict.Count == 1 && a.dict.ContainsKey(5))
+    
+    def oy = if (a.n != null && a.n.Count > 0) a.n[0] else null
+    
+    when(test("list of persist", oy != null))
+    
+      def res = match(oy.s)
+        | Var.B(4, null) => true
+        | _ => false  
+        
+      test("variant update", res)        
+    
+  Main() : void      
+  
+    when (File.Exists(n))
+      File.Delete(n)
+    
+    def z = Create()         
+    
+    z.Dispose()        
+  
+    def z = Zdb(n)
+    
+    test("Empty root if dispose before close", z.Root == null)
+    
+    z.Dispose()
+    
+    Open0()
+        
+    Open1()
+    
+    Open2()
+        
+    Resume()
+        
+    
+
+    
+    
+   
+    
+      
+    
+
