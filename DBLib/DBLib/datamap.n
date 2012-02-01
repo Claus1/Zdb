@@ -536,7 +536,7 @@ namespace DBLib
     /*рассчитать место для типа  */                    
       def delta = root.d_new            
       
-      root.d_new += Memblock.Create.[T](1).size                                    
+      root.d_new = delta + Memblock.Create.[T](1).size                                    
       
       delta 
       
