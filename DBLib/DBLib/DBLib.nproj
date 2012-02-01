@@ -30,7 +30,7 @@
     <CmdArgs>Main.n -r:C:\MyProjects\DBLib\DBLib\bin\Debug\DBLib.dll</CmdArgs>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
+    <DebugSymbols>false</DebugSymbols>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
@@ -64,13 +64,15 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ClassFormer.n">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="datamap.n">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="FieldFormer.n">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="Macro1.n" />
     <Compile Include="Properties\AssemblyInfo.n" />
   </ItemGroup>
   <ItemGroup>

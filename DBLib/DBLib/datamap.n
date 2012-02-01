@@ -69,7 +69,7 @@ namespace DBLib
       Memblock(SizeOf.[T]())
     
     static public SizeOf[T]() : int       
-    /*Marshal.Size(char) == 2 for russian letters and 
+    /*Marshal.Size(char) == 1 for russian letters and 
     generic type has to be calculating*/       
       def type = typeof(T)
       
@@ -168,7 +168,7 @@ namespace DBLib
     
     filename : string
     
-    open_all_now : bool
+    open_all_immediately : bool
     
     //информация в базе о используемых базах
     use_base_names : List[string]    
@@ -243,19 +243,15 @@ namespace DBLib
     
       for(mutable i = 0; i < transaction_objects.Count; ++i)
       
-        transaction_objects[i].Save()      
-        
-      transaction_objects.Clear()
-      
-      writedInTransaction.Clear()
-      
-      when (use_bases_changed)
-      
-        use_bases_changed = false
-        
-        root.bases = write_raw(use_base_names,root.bases)
+        transaction_objects[i].Save()                                 
                 
-      SaveDataRoot()      
+      when (transaction_objects.Count > 0 || writedInTransaction.Count > 0)              
+        
+        SaveDataRoot()      
+      
+        transaction_objects.Clear()
+        
+        writedInTransaction.Clear()
      
     public Cancel() : void
     
@@ -396,6 +392,8 @@ namespace DBLib
       
         mmf = MemoryMappedFile.CreateFromFile(filename, FileMode.Open, filename, size_)
         
+        accessor = mmf.CreateViewAccessor() 
+        
     public this(fname: string, size: int, types: DictTypes, multi: bool, open_all_now_: bool, clearData = false)
       
       outer_types = types
@@ -404,7 +402,7 @@ namespace DBLib
       
       filename = fname
       
-      open_all_now = open_all_now_
+      open_all_immediately = open_all_now_
       
       def fi = FileInfo(filename)            
                   
@@ -432,7 +430,7 @@ namespace DBLib
         else
           List.[string]([filename])
           
-        use_bases = List(use_base_names.Select(x => if (open_all_now) Open(x) else null))        
+        use_bases = List(use_base_names.Select(x => if (open_all_immediately) Open(x) else null))        
             
       updateTypes(types)  
       
@@ -442,7 +440,13 @@ namespace DBLib
       Commit()      
               
     public SaveDataRoot() : void       
-    /*сохраняет рабочую информацию базы */        
+    /*сохраняет рабочую информацию базы */ 
+      when (use_bases_changed)
+      
+        use_bases_changed = false
+        
+        root.bases = write_raw(use_base_names,root.bases)
+          
       accessor.Write(Memblock.delta, ref root)   
       
     public Type2int(str_type: string): int
