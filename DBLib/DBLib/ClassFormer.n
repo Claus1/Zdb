@@ -182,13 +182,13 @@ namespace DBLib
     public getbits(this data : int, delta : int,size : int): int    
      
       ((data >> delta) & ((1 << size) - 1))							
-		
+    
     public setbits(data: ref int, delta : int , size : int ,val : int): void
       
       mutable i = 1
       
       mutable count = 0
-		
+    
       while (count < size)
         
         if ((val & i) != 0)
@@ -196,7 +196,7 @@ namespace DBLib
           data |= i << delta
         else
           data &= ~(i << delta)
-				
+        
         ++count
         
         i <<= 1 
@@ -580,17 +580,17 @@ namespace DBLib
           
           public SetStatus(status : ObjectStatus) : void
           {            
-              if (status == ObjectStatus.correct)
+            if (status == ObjectStatus.correct)
               
-                status__ &= ~ObjectStatus.different
-              else                
-              {  
-                when (status__ == ObjectStatus.correct)                   
+              status__ &= ~ObjectStatus.different
+            else                
+            {  
+              when (status__ == ObjectStatus.correct)                   
                 
-                  Dbase.Add2Transact(this);
+                Dbase.Add2Transact(this);
                   
-                status__ |= status
-              }
+              status__ |= status
+            }
           }
           
           public static load(datamap:Database, delta:int): $name

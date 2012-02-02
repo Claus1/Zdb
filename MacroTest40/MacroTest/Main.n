@@ -56,13 +56,13 @@ public variant Var
   | B 
     z : int
     next : Var
-	
+  
     
 enum test_enum
   | a
   | b
   
-	  
+    
 struct Zz
   a : int
   b : double

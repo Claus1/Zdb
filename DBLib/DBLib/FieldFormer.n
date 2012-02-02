@@ -216,26 +216,26 @@ namespace DBLib
       save_block = <[          
         def arr_list = System.Collections.Generic.List();
           
-				mutable addr;
-				  
-				when($refer != null)
-				  
-				  foreach(el in $refer)
-				    
-					  arr_list.Add(KeyValuePair($(fld_save("Key", gt1.TypeInfo)), $(fld_save("Value", gt2.TypeInfo))));
-					    
-				$exchange = datamap.write_arr.[KeyValuePair[$(type4(gt1)), $(type4(gt1))] ](arr_list.ToArray(),$exchange, $refer);				  
-			]>
-								
-				
+        mutable addr;
+          
+        when($refer != null)
+          
+          foreach(el in $refer)
+            
+            arr_list.Add(KeyValuePair($(fld_save("Key", gt1.TypeInfo)), $(fld_save("Value", gt2.TypeInfo))));
+              
+        $exchange = datamap.write_arr.[KeyValuePair[$(type4(gt1)), $(type4(gt1))] ](arr_list.ToArray(),$exchange, $refer);				  
+      ]>
+                
+        
       load_block = <[
         $refer = $fld_type();
-							    
-				when ($exchange != 0)										
-								
-					foreach(el in datamap.load_arr.[KeyValuePair[$(type4(gt1)), $(type4(gt1))]]($exchange))										
-									
-						$refer.Add($(fld_load("Key", gt1.TypeInfo)), $(fld_load("Value", gt2.TypeInfo)));
+                  
+        when ($exchange != 0)										
+                
+          foreach(el in datamap.load_arr.[KeyValuePair[$(type4(gt1)), $(type4(gt1))]]($exchange))										
+                  
+            $refer.Add($(fld_load("Key", gt1.TypeInfo)), $(fld_load("Value", gt2.TypeInfo)));
       ]>
       CreateProperField()   
       
@@ -272,12 +272,12 @@ namespace DBLib
       
       save_block = <[                  
           $exchange = datamap.write_raw($refer, $exchange);                   
-				]>
+        ]>
         
       load_block = <[
         when ($exchange != 0)        
-	         $refer = datamap.load_raw($exchange) :> $fld_type;
-	      ]>
+           $refer = datamap.load_raw($exchange) :> $fld_type;
+        ]>
             
       CreateProperField()    
           
@@ -310,22 +310,22 @@ namespace DBLib
          {
             def arr = datamap.load_arr.[$elem_type]($exchange);        
             
-					  for(mutable i = arr.Length - 1; i >= 0; --i )
+            for(mutable i = arr.Length - 1; i >= 0; --i )
 
-					    $refer = arr[i] :: $refer
-				 }
-			  ]>
+              $refer = arr[i] :: $refer
+         }
+        ]>
       else
        <[
         $refer = if ($exchange != 0)
         
-					$fld_type(datamap.load_arr.[$elem_type]($exchange)) 
-				else
-					$fld_type()
-		  ]>
+          $fld_type(datamap.load_arr.[$elem_type]($exchange)) 
+        else
+          $fld_type()
+      ]>
       
       CreateProperField()
-						
+            
     create_ref_container(nlist: bool, gen_types : list[PExpr]) : void
       
       save_control = true
@@ -344,50 +344,50 @@ namespace DBLib
        
           def arr_list = System.Collections.Generic.List();				  
           
-				  when($refer != null)				  				    
-				  
-				    foreach(el in $refer)				    									
-				    
-					    arr_list.Add(if (el != null) datamap.PackAddress4(el) else 0);
-						
-				  $exchange = datamap.write_arr.[int](arr_list.ToArray(), $exchange, $refer);				  
-				]>
-				
+          when($refer != null)				  				    
+          
+            foreach(el in $refer)				    									
+            
+              arr_list.Add(if (el != null) datamap.PackAddress4(el) else 0);
+            
+          $exchange = datamap.write_arr.[int](arr_list.ToArray(), $exchange, $refer);				  
+        ]>
+        
       load_block = if (nlist)              
         <[
-		      $refer = [];
-							    
-					when ($exchange != 0)										
-					{ 
-					  def arr = datamap.load_arr.[int]($exchange);
-					  
-					  for(mutable i = arr.Length - 1; i >= 0; --i )
+          $refer = [];
+                  
+          when ($exchange != 0)										
+          { 
+            def arr = datamap.load_arr.[int]($exchange);
+            
+            for(mutable i = arr.Length - 1; i >= 0; --i )
             {
-					    def el_address = arr[i];					    						
-						
-							$refer = (if (el_address != 0) $elem_type.load(datamap, el_address) else null) :: $refer
-						}
-					}
-				 ]>
+              def el_address = arr[i];					    						
+            
+              $refer = (if (el_address != 0) $elem_type.load(datamap, el_address) else null) :: $refer
+            }
+          }
+         ]>
       else
         <[
-		      $refer = $fld_type();
-							    
-					when ($exchange != 0)										
-					
-						foreach(el_address in datamap.load_arr.[int]($exchange))										
-						
-							$refer.Add(if (el_address != 0) $elem_type.load(datamap, el_address) else null)
-				 ]>
+          $refer = $fld_type();
+                  
+          when ($exchange != 0)										
+          
+            foreach(el_address in datamap.load_arr.[int]($exchange))										
+            
+              $refer.Add(if (el_address != 0) $elem_type.load(datamap, el_address) else null)
+         ]>
               
       CreateProperField()
-				
+        
     create_value() : void      
     /*генерация для value типов полей*/          
       registration($"$fld_type")                
         
       CreateProperField()
-		   
+       
     create_string_prop() : void 
     /*генерация для строк */            
       save_control = true
@@ -401,7 +401,7 @@ namespace DBLib
       load_block = <[$refer = if ($exchange != 0)  datamap.load_string($exchange) else null;]>
                               
       CreateProperField()
-	            
+              
     str2expr(name : string): PExpr
     /*генерация PExpr для составных имен*/
       PExpr.FromQualifiedIdentifier((man,name))
@@ -501,7 +501,7 @@ namespace DBLib
             else 
               when ($exchange == 0)				    
               
-				        $exchange = datamap.Address4($refer);
+                $exchange = datamap.Address4($refer);
           ]>
           
         when (load_verify)
@@ -557,23 +557,23 @@ namespace DBLib
           
             $(fld_name : name) : $fld_type 
             {     
-			        get {												 
-			          $load_block;
-				        $refer
-				      }
-			        set	{
-			          SetStatus(ObjectStatus.different);
-			          
-			          $saveAtPropSet;
-			          
-			          $loadPropSet;
-			          
-				        $refer = value
-				      }
-			      }]>
+              get {												 
+                $load_block;
+                $refer
+              }
+              set	{
+                SetStatus(ObjectStatus.different);
+                
+                $saveAtPropSet;
+                
+                $loadPropSet;
+                
+                $refer = value
+              }
+            }]>
         unless (marked_as_private)
           prop.Attributes |= NemerleModifiers.Public       			   
-			      
+            
         prop.Location = loc
       
         typeBuilder.DefineWithSource(prop)                           
