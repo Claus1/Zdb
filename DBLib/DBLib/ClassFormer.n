@@ -62,7 +62,12 @@ namespace DBLib
     
     when (!managerExtensions.TableCreated)
       managerExtensions.CreateTypeTable(Nemerle.Macros.ImplicitCTX())
-    
+      
+  [MacroUsage(MacroPhase.WithTypedMembers , MacroTargets.Class)]\
+  macro PersistConstructors(typeBuilder : TypeBuilder)
+  
+    ClassFormer.AddDatamapInit2Constuctors(typeBuilder)
+        
   [MacroUsage(MacroPhase.BeforeInheritance , MacroTargets.Class)]\
   macro Zv(typeBuilder : TypeBuilder)
   
@@ -223,6 +228,8 @@ namespace DBLib
              
         when(type.isPersist())
         
+          type.GetModifiers().AddCustomAttribute(<[PersistConstructors]>)          
+        
           if (type.Ast is TopDeclaration.Variant)
           
             foreach(vot in type.GetVariantOptions()) 
@@ -280,7 +287,29 @@ namespace DBLib
                  
       free_refs = <[ {..$(tb.UserData["free_refs"] :> list[PExpr] ?? [])} ]>
       
-    public CreateExtClass() : void                  
+    static public AddDatamapInit2Constuctors(tb : TypeBuilder): void            
+      
+      mutable added 
+      
+      foreach(m is MethodBuilder in tb.GetMembers())
+        
+        when(m.Name == ".ctor" && (m.Attributes & NemerleModifiers.Static) == NemerleModifiers.None)
+        
+          m.Body = <[                                               
+            
+            datamap = Database.Active;
+            
+             $(m.Body);  
+          ]>
+          
+          when(m.GetParameters() == [])
+                              
+            added = true
+          
+      when (!added)        
+        tb.DefineWithSource(<[ decl: public this() { datamap = Database.Active } ]>)
+      
+    public CreateExtClass() : void                            
      
       AddMembers(ClassConstructors)
       
@@ -659,12 +688,7 @@ namespace DBLib
         <[decl:      
         class Dummy /*для копирования из него членов и методов*/
         {                                                         
-          //конструкторы
-          public this() 
-          {
-            datamap = Database.Active
-          }
-                                            
+          //конструкторы                                                      
           public this(dmap: Database)
           {                
             datamap = dmap;            

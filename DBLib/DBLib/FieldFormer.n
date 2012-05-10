@@ -216,8 +216,6 @@ namespace DBLib
       save_block = <[          
         def arr_list = System.Collections.Generic.List();
           
-        mutable addr;
-          
         when($refer != null)
           
           foreach(el in $refer)

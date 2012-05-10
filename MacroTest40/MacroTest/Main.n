@@ -102,7 +102,9 @@ class Y
   
   ZT ai : List.[X]
   
+  public this(ai_ : List.[X])
   
+    ai = ai_
   
 class X 
    
@@ -115,6 +117,9 @@ class X
   ZT n : List.[Y]
         
   ZS d : Dum
+  
+  public this()
+    ui = 5      
 
   
 module Program 
@@ -162,9 +167,7 @@ module Program
     
     def l = List()
     
-    def t = Y()
-    
-    t.ai = List()        
+    def t = Y(List())        
     
     t.px = dum3 //far object
     
