@@ -47,7 +47,7 @@ public class D
   public static n : List[string] = List.[string]()
   public mutable y : int
   
-[Zv]\
+[Zo]\
 public variant Var 
   
   | A 
@@ -84,39 +84,42 @@ class Dum3: X
   
 class Fg : X
   
-  ZT plist : list.[X]
-  ZT g : Gs
-  ZT dict : Dictionary.[int, X]
-  str2 : string
+  public plist : list.[X]
+  public  g : Gs
+  public  dict : Dictionary.[int, X]
+  [Zno]str2 : string 
 
+[Zo]\  
 class G
-  ZT v : Var
-  ZT r : test_enum
-  
+  public   v : Var
+  public   r : test_enum
+
+[Zo]\
 class Y
-  ZS g : Dum
+  public   g : Dum
   
-  ZT s : Var
+  public   s : Var
   
-  ZT px : X
+  public   px : X
   
-  ZT ai : List.[X]
+  public   ai : List.[X]
   
   public this(ai_ : List.[X])
   
     ai = ai_
-  
+    
+[Zo]\  
 class X 
    
   public ui : int
   
-  ZT s : string
+  public  s : string
   
-  ZT s2 : list.[int]
+  public  s2 : list.[int]
   
-  ZT n : List.[Y]
+  public  n : List.[Y]
         
-  ZS d : Dum
+  public  d : Dum
   
   public this()
     ui = 5      
@@ -138,10 +141,10 @@ module Program
     res
     
   Resume(): void
-    unless(err_found)
+    if(!err_found)
       Console.WriteLine("All tests ok!") 
-    
-    Console.ReadKey()    
+    else
+      Console.ReadKey()    
         
   Create(dum3: Dum3 = null): Database                    
             

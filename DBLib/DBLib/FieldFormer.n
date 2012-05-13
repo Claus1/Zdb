@@ -51,8 +51,7 @@ namespace DBLib
     
     fld_name : Name    
     fld_type : PExpr 
-        
-    mode : Mode
+            
     typer : Typer
     
     variant_mode : bool
@@ -75,23 +74,18 @@ namespace DBLib
     mutable save_verify : bool
     
     public mutable error_found = false
+    
     public mutable save_block : PExpr 
+    
     public mutable load_block : PExpr 
+    
     public mutable marked_as_private: bool
             
     public Proccess(): void
             
-        if (typeDetect())
-          when (mode == Mode.SER)
+      when (!typeDetect() && !error_found)                    
           
-            Message.Warning(loc, "The field supports fast serialization (ZX, Zx).")
-        else
-          unless (error_found)
-          
-            create_ser()          
-            
-            when (mode != Mode.SER)                              
-              Message.Warning(loc, "The field is stored only. by Net serialization (ZS, Zs).")
+        create_ser()                      
           
     fieldTypes(ty : TypeInfo) : Seq[TypeInfo]
     
@@ -404,7 +398,7 @@ namespace DBLib
     /*генерация PExpr для составных имен*/
       PExpr.FromQualifiedIdentifier((man,name))
       
-    public this(tb : TypeBuilder, name : Name, type : PExpr, loc_: Location, tp : Typer)
+    public this(tb : TypeBuilder, name : Name, type : PExpr, loc_: Location, tp : Typer, vmode: bool)
     /*variant field constructor*/
       fld_name = name
       
@@ -412,32 +406,14 @@ namespace DBLib
       
       loc = loc_
       
-      typeBuilder = tb
+      typeBuilder = tb            
       
-      mode = Mode.DB
       
       typer = tp
       
-      variant_mode = true
+      variant_mode = vmode
       
-      init()
-      
-    public this(tb : TypeBuilder, e : PExpr, param : Mode, tp : Typer)
-    /*class field constructor*/      
-      match (e)        
-        | <[ $(name : name) : $type ]> => 
-          fld_name = name
-          fld_type = type
-          loc = e.Location      
-          typeBuilder = tb
-          mode = param
-          typer = tp
-          
-          init()
-          
-        | _ =>  
-          error_found = true
-          Message.Error(loc, <#Expected: name : type #>)           
+      init()                
       
     init() : void
     
@@ -460,19 +436,8 @@ namespace DBLib
         str_has2save = $"_db_service.save_$(fld_name)"                  
       
         var_has2save = str2expr(str_has2save)
-        //add field 2 class
-        mutable block = typeBuilder.UserData["fields"] :> list[FieldFormer]       
-        
-        when (block == null) 
-          typeBuilder.AddImplementedInterface(<[IPersist]>)
-          
-          typeBuilder.GetModifiers().AddCustomAttribute(<[Persist]>)
-          
-          block = []              
-          //добавить в список явных постоянных классов             
-          managerExtensions.AddPerst(typeBuilder)                          
-          
-        typeBuilder.UserData["fields"] = this :: block
+                          
+        typeBuilder.UserData["fields"] = this :: (typeBuilder.UserData["fields"] :> list[FieldFormer] ?? [])
       
     CreateProperField() : void
       

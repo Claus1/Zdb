@@ -51,62 +51,29 @@ using System.Runtime.Serialization.Formatters.Binary;
 [assembly: Nemerle.Internal.OperatorAttribute ("DBLib", "put", true, 281, 280)]
 
 namespace DBLib
-  enum Mode    
-    | SER
-    | DB
-    
-  [MacroUsage(MacroPhase.BeforeTypedMembers , MacroTargets.Class)]\
-  macro Persist(typeBuilder : TypeBuilder)
-  
-    ClassFormer(typeBuilder).CreateExtClass()
-    
-    when (!managerExtensions.TableCreated)
-      managerExtensions.CreateTypeTable(Nemerle.Macros.ImplicitCTX())
-      
+          
   [MacroUsage(MacroPhase.WithTypedMembers , MacroTargets.Class)]\
   macro PersistConstructors(typeBuilder : TypeBuilder)
   
-    ClassFormer.AddDatamapInit2Constuctors(typeBuilder)
-        
+    ClassFormer.AddDatamapInit2Constuctors(typeBuilder)  
+    
   [MacroUsage(MacroPhase.BeforeInheritance , MacroTargets.Class)]\
-  macro Zv(typeBuilder : TypeBuilder)
+  macro Zo(typeBuilder : TypeBuilder)
   
     managerExtensions.AddPerst(typeBuilder)
     typeBuilder.AddImplementedInterface(<[IPersist]>)        
     
   [MacroUsage(MacroPhase.BeforeTypedMembers , MacroTargets.Class)]\
-  macro Zv(typeBuilder : TypeBuilder)
-  
-    ClassFormer(typeBuilder).CreateExtVariant(Macros.ImplicitCTX())
-    
+  macro Zo(_ : TypeBuilder)
+              
     when (!managerExtensions.TableCreated)
-      managerExtensions.CreateTypeTable(Nemerle.Macros.ImplicitCTX())    
+      managerExtensions.CreateTypeTable(Nemerle.Macros.ImplicitCTX()) 
+      
+  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Field)]\
+  macro Zno(ty : TypeBuilder, fld : ParsedField)          
     
-  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Method)]\
-  macro ZT(typeBuilder : TypeBuilder, _ : ClassMember.Function, expr : PExpr)\
-  syntax ("ZT", expr)
-    
-    FieldFormer(typeBuilder, expr,  Mode.DB, Macros.ImplicitCTX())
-    
-  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Method)]\
-  macro Zt(typeBuilder : TypeBuilder, _ : ClassMember.Function, expr : PExpr)\
-  syntax ("Zt", expr)
-    
-    FieldFormer(typeBuilder, expr,  Mode.DB, Macros.ImplicitCTX()) <- {marked_as_private = true;}
-   
-    
-  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Method)]\
-  macro ZS(typeBuilder : TypeBuilder, _ : ClassMember.Function, expr : PExpr)\
-  syntax ("ZS", expr)
-  
-    FieldFormer(typeBuilder, expr, Mode.SER, Macros.ImplicitCTX())
-    
-  [MacroUsage(MacroPhase.BeforeInheritance, MacroTargets.Method)]\
-  macro Zs(typeBuilder : TypeBuilder, _ : ClassMember.Function, expr : PExpr)\
-  syntax ("Zs", expr)
-  
-    FieldFormer(typeBuilder, expr, Mode.SER, Macros.ImplicitCTX()) <- {marked_as_private = true;}
-          
+    ty.UserData["Zno"] = fld.Name :: (ty.UserData["Zno"] :> list[string] ?? [])
+            
   macro Zdb1 (path, size = 0) 
     
     <[ Database.Active = Database.Find($path) ?? Database($path, $size, TableTypes.dic, false, false); 
@@ -139,12 +106,14 @@ namespace DBLib
 
   module managerExtensions   
   
+    DbDeclaredFields = "DbDeclaredFields"
+  
     perst_hash = HashSet.[TypeInfo]()   
     
     public mutable TableCreated : bool
     
     public tb_exchange_struct(this tb : TypeBuilder) : TypeBuilder
-      
+            
       tb.DeclaredNestedTypes.First(x => x.Name == tb.estruct())
     
     public estruct(this tb : TypeInfo) : string
@@ -168,17 +137,25 @@ namespace DBLib
       
       perst_hash.Add(ti)
       
+    public HasDbDeclaredFields(ti : TypeInfo): bool
+    //класс имеет объявленные db поля
+      ti is TypeBuilder && (ti :> TypeBuilder).UserData[DbDeclaredFields] != null             
+      
     public isPersist(this ti : TypeInfo) : bool                               
       
       (ti :: ti.GetSuperTypes().Map(_.TypeInfo)).Exists(perst_hash.Contains(_))          
       
     public parentWithAddedDBFields(this ti : TypeInfo) : TypeInfo
       
-      (ti.GetSuperTypes().Map(_.TypeInfo)).Find(perst_hash.Contains(_)).Value
+      ti.GetSuperTypes().Map(_.TypeInfo).Last(HasDbDeclaredFields(_))
       
     public isPersistWithTheSameFieldsAsParent(this ti : TypeInfo) : bool  
       
-      isPersist(ti) && !perst_hash.Contains(ti)
+      ti.isPersist() && ti.HasPersistParent() && ti.VariantOptionCode == -1 && !HasDbDeclaredFields(ti)
+      
+    public DeclaredFields(this ti : TypeBuilder, val = true: bool): void
+    
+      ti.UserData[DbDeclaredFields] = if (val) ti else null
       
     public HasPersistParent(this ti : TypeInfo) : bool                            
         
@@ -222,33 +199,50 @@ namespace DBLib
       
       def types = typer.Manager.NameTree.NamespaceTree.GetTypeBuilders(onlyTopDeclarations=true)
       
-      foreach (type in types) 
+      def plist = List()
+      //формировать отсортированный по наследованию список
+      foreach (type in types)               
       
-        def tstr = type.ToString()
-             
-        when(type.isPersist())
-        
-          type.GetModifiers().AddCustomAttribute(<[PersistConstructors]>)          
-        
-          if (type.Ast is TopDeclaration.Variant)
+        when(type.isPersist() && !plist.Contains(type))
+                             
+          foreach(parent in type.GetSuperTypes())
           
-            foreach(vot in type.GetVariantOptions()) 
+            when (parent.tycon is TypeBuilder)
+            
+              def tb = parent.tycon :> TypeBuilder
               
-              def forced_name = PExpr.FromQualifiedIdentifier(typer.Manager, $"$vot")
-              
-              def init_type = <[                 
-                dic.Add($($"$vot" : string),  (db, addr) => $forced_name.load(db, addr));
-              ]>          
-              init ::= init_type               
-          else    
-            def init_type = <[                              
-               dic.Add($(tstr : string),  (db, addr) => $(type.ParsedTypeName)(db, addr));
-             ]>          
-            init ::= init_type 
-              
-          unless (perst_hash.Contains(type))
+              when (!plist.Contains(tb) && tb.isPersist())
+            
+                plist.Add(tb)                            
+          
+          plist.Add(type)
+            
+      foreach (type in plist)          
         
-            ClassFormer(type).CreateExtClass()
+        def tstr = type.ToString()
+        
+        type.GetModifiers().AddCustomAttribute(<[PersistConstructors]>)          
+        
+        if (type.Ast is TopDeclaration.Variant)
+        
+          ClassFormer(type, typer).CreateExtVariant()
+          
+          foreach(vot in type.GetVariantOptions()) 
+              
+            def forced_name = PExpr.FromQualifiedIdentifier(typer.Manager, $"$vot")
+              
+            def init_type = <[                 
+              dic.Add($($"$vot" : string),  (db, addr) => $forced_name.load(db, addr));
+            ]>          
+            init ::= init_type               
+        else    
+          def init_type = <[                              
+              dic.Add($(tstr : string),  (db, addr) => $(type.ParsedTypeName)(db, addr));
+            ]>          
+          init ::= init_type                         
+        
+          ClassFormer(type, typer).CreateExtClass()
+                    
           
       def tblClass = <[ decl:
           module TableTypes
@@ -274,18 +268,55 @@ namespace DBLib
   class ClassFormer
   /*генератор основных тел классов и вариантов*/
     name : PExpr
-    free_refs : PExpr
-    tb : TypeBuilder    
-    estruct : string
     
-    public this(tb_ : TypeBuilder)  
-      tb = tb_            
-          
-      name = tb.ParsedTypeName            
+    free_refs : PExpr
+    
+    tb : TypeBuilder    
+    
+    typer : Typer
+    
+    public estruct : string
+      [Memoize]get
+        tb.estruct()
+    
+    public this(tb_ : TypeBuilder, ty_: Typer)  
+    
+      tb = tb_    
       
-      estruct = tb.estruct()
+      typer = ty_
+          
+      name = tb.ParsedTypeName                        
                  
       free_refs = <[ {..$(tb.UserData["free_refs"] :> list[PExpr] ?? [])} ]>
+            
+                              
+    public TransformMembers() : void 
+      
+      mutable lst = []   
+      
+      def no_set = tb.UserData["Zno"] :> list[string] ?? []
+      
+      foreach(member in tb.GetParsedMembers())
+      
+        match (member)
+          | ClassMember.Field(name = n, ty = t) =>
+          
+            def str = $"$n"
+          
+            when(!no_set.Contains(str))                        
+            
+              FieldFormer(tb, Macros.UseSiteSymbol(str), t, member.Location, typer, false)\
+                <- { marked_as_private = (member.Attributes & NemerleModifiers.Public) == 0 }   
+              
+              lst ::= member
+            
+              tb.DeclaredFields()
+            
+          | _ => {}
+            
+      lst.Iter(tb.RemoveParsedMember(_))
+      
+      //tb.GetParsedMembers().Iter(Diagnostics.Debug.Write(_))
       
     static public AddDatamapInit2Constuctors(tb : TypeBuilder): void            
       
@@ -309,9 +340,11 @@ namespace DBLib
       when (!added)        
         tb.DefineWithSource(<[ decl: public this() { datamap = Database.Active } ]>)
       
-    public CreateExtClass() : void                            
-     
-      AddMembers(ClassConstructors)
+    public CreateExtClass() : void          
+    
+      TransformMembers()
+    
+      AddMembers(ClassConstructors)            
       
       if (tb.HasPersistParent())
         AddMembers(ClassBlockChild)
@@ -347,10 +380,9 @@ namespace DBLib
               
               _exchange.exchange_base = base._exchange
             }
-           ]>)         
-        
-                    
-    public CreateExtVariant(tp : Typer) : void
+           ]>)                                                        
+      
+    public CreateExtVariant() : void
       
       AddMembers(VariantBlockRoot)            
       
@@ -358,19 +390,21 @@ namespace DBLib
       
         managerExtensions.AddPerst(ty)
         
-        def cfVo = ClassFormer(ty)
+        def cfVo = ClassFormer(ty, typer)
         
         cfVo.DoVariantOption()
                 
         mutable save_block = []
+        
         mutable load_block = []
         
         foreach(member in ty.GetParsedMembers())
+        
           match (member)
             | ClassMember.Field(name = n, ty = t) =>
                 def nstr = $"$n"
                 
-                def fld = FieldFormer(ty, Macros.UseSiteSymbol(nstr), t, member.Location, tp)
+                def fld = FieldFormer(ty, Macros.UseSiteSymbol(nstr), t, member.Location, typer, true)
                 
                 fld.Proccess()
                 
@@ -395,7 +429,7 @@ namespace DBLib
             
         ty.tb_exchange_struct().Compile()                     
         
-        def forced_name = PExpr.FromQualifiedIdentifier(tp.Manager, $"$ty")
+        def forced_name = PExpr.FromQualifiedIdentifier(typer.Manager, $"$ty")
         
         cfVo.AddMembers(<[decl: class Dummy            
         {
